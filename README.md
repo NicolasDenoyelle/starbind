@@ -21,7 +21,8 @@ Starbind takes a topology resource type (e.g 'core', 'package') and a permutatio
 of these resources as input and will bind application child threads / processes
 to these resources.
 
-See `starbind --help` for more info on the command line.
+
+See `python3 -m starbind --help` for more info on the command line.
 
 See `tmap` pages for more info on permutations. 
 
