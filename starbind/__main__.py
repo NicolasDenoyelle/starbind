@@ -8,7 +8,7 @@
 
 import argparse
 import re
-from cpubind import MPI, OpenMP, Ptrace
+from starbind import MPI, OpenMP, Ptrace
 from tmap.topology import Topology
 from tmap.permutation import Permutation
 
