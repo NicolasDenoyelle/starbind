@@ -15,14 +15,22 @@ Starbind currently supports:
 * hwloc, lstopo (hwloc) and hwloc-info.
 * tmap (https://github.com/NicolasDenoyelle/tmap)
 
+## Install
+
+``` sh
+python3 setup.py install --user
+```
+
 ## Usage
 
 Starbind takes a topology resource type (e.g 'core', 'package') and a permutation
 of these resources as input and will bind application child threads / processes
 to these resources.
 
-
-See `python3 -m starbind --help` for more info on the command line.
+* Show command line help for more info.
+``` sh
+python3 -m starbind --help
+```
 
 See `tmap` pages for more info on permutations. 
 
