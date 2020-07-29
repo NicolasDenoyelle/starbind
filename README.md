@@ -7,7 +7,6 @@ Starbind currently supports:
 * openmpi
 * mpich
 * clone(), fork(), vfork() system calls
-To bind threads.
 
 ## Requirements.
 
@@ -23,6 +22,7 @@ of these resources as input and will bind application child threads / processes
 to these resources.
 
 See `starbind --help` for more info on the command line.
+
 See `tmap` pages for more info on permutations. 
 
 ## Module
@@ -49,7 +49,7 @@ make -C tests
 Make sure that Makefile uses the good compilers and flags for your machine.
 
 Be carefull to use the same version of hwloc library as your mpi version.
-this can be done by adding `-Lpath/to/hwloc` before the flag -lhwloc.
+this can be done by adding `-Lpath/to/hwloc` before the flag `-lhwloc`.
 
 2. Run tests:
 
