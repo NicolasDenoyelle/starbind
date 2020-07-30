@@ -41,18 +41,26 @@ into executable linked dynamic libraries with ldd and
 try to match a name with openmp, omp. If no match is
 found, ptrace is used.''')
 
-parser.add_argument('-t', '--type', help="Topology object type used to bind threads", default='Core', type=str)
-parser.add_argument('-p', '--permutation', help="A permutation id to reorder topology objects.", default=0, type=int)
-parser.add_argument('-c', '--command', help="The command line to run", required=True, type=str)
-parser.add_argument('-v', '--verbose', help="Print resource permutattion", default=False, action='store_true')
-
+parser.add_argument('-t', '--type',
+                    help="Topology object type used to bind threads",
+                    default='Core', type=str)
+parser.add_argument('-p', '--permutation',
+                    help="A permutation id to reorder topology objects.",
+                    default=0, type=int)
+parser.add_argument('-c', '--command',
+                    help="The command line to run",
+                    required=True, type=str)
+parser.add_argument('-v', '--verbose',
+                    help="Print resource permutattion",
+                    default=False, action='store_true')
 args = parser.parse_args()
 
-#Get the list of topology resources
+# Get the list of topology resources
 topology = Topology(structure=False)
 resources = [ n for n in topology if args.type.lower() in n.type.lower() ]
 if len(resources) == 0:
-    raise ValueError('Invalid topology type {}. Valid types are: {}'.format(args.type, set(n.type for n in topology)))
+    raise ValueError('Invalid topology type {}. Valid types are: {}'\
+                     .format(args.type, set(n.type for n in topology)))
 
 # Apply permutation on resources
 permutation = Permutation(len(resources), args.permutation)

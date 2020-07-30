@@ -12,7 +12,7 @@ import re
 from random import shuffle
 from tempfile import TemporaryFile as tmp
 from itertools import cycle
-from signal import SIGSTOP, SIGCONT, SIGTRAP, SIGKILL
+from signal import SIGSTOP, SIGCONT, SIGTRAP, SIGKILL, SIGCHLD
 
 def ldd(file):
     """
@@ -83,14 +83,24 @@ class OpenMP(Binding):
     OpenMP bind method will export OMP_PLACES variables.
     Numbering of processing units is using logical indexing.
     """
-
-    ldd_regex=re.compile('(lib.*omp$)|(.*openmp.*)')
-
-    def run(self, cmd):
-        places = [ '{{{}}}'.format(','.join([ str(pu.logical_index) for pu in r.PUs ])) for r in self.resource_list ]
+    
+    def __init__(self, resource_list, num_threads=None):
+        super().__init__(resource_list)
+        places = [ '{{{}}}'.format(','.join([ str(pu.logical_index) for pu in r.PUs ])) for r in resource_list ]
         places = '{}'.format(', '.join(places))
+        self.OMP_PLACES=places
+        if num_threads is not None:
+            if type(num_threads) is int:
+                self.OMP_NUM_THREADS=str(num_threads)
+            else:
+                self.OMP_NUM_THREADS=str(len(resource_list))
+
+    def run(self, cmd, num_threads=False):
         cmd = cmd.split()
-        os.execvpe(cmd[0], cmd, {'OMP_PLACES': places})
+        env = { 'OMP_PLACES': self.OMP_PLACES }
+        if hasattr(self, 'OMP_NUM_THREADS'):
+            env['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS
+        os.execvpe(cmd[0], cmd, env)
 
     @staticmethod
     def is_OpenMP_application(filename):
@@ -127,22 +137,33 @@ class Ptrace(Binding):
         """
         self.resource_list = cycle(resource_list)
 
-    def _trace_pid_(self, pid):
+    def bind_next_thread(self, pid):
+        bind_thread(next(self.resource_list), pid)
+        
+    @staticmethod
+    def trace_pid(pid, fn, *args, **kwargs):
         """
         Internal method of tracer to process signals from tracee and catch clone(), fork(), vfork() syscalls()
+        @arg pid is the pid of the process to trace
+        @arg fn is a function that takes a pid as first argument and that will be called on this
+        process and its child processes.
+        @args: fn other arguments.
+        @kwargs: fn other keyword arguments.
         """
-        if Ptrace.ptrace(Ptrace.PTRACE_SEIZE, pid, 0, (Ptrace.PTRACE_O_TRACECLONE|Ptrace.PTRACE_O_TRACEFORK)) == -1:
+        if Ptrace.ptrace(Ptrace.PTRACE_SEIZE, ctypes.c_int32(pid), None,
+                         ctypes.c_uint64(Ptrace.PTRACE_O_TRACECLONE|Ptrace.PTRACE_O_TRACEFORK)) == -1:
             os.kill(pid, SIGKILL);
             raise Exception('ptrace syscall failed.')
         else:
-            bind_thread(next(self.resource_list), pid)
+            fn(pid, *args, **kwargs)
             os.kill(pid, SIGCONT);
         while True:
             child, status = os.waitpid(-1, 0)
-            if os.WIFEXITED(status) and child == pid:
-                return os.WEXITSTATUS(status)
-            if os.WIFSIGNALED(status) and child == pid:
-                return 0
+            if child == pid:
+                if os.WIFEXITED(status):
+                    return os.WEXITSTATUS(status)
+                if os.WIFSIGNALED(status):
+                    return 0
             if os.WIFSTOPPED(status):
                 sig = os.WSTOPSIG(status)
                 if sig == SIGTRAP:
@@ -150,12 +171,17 @@ class Ptrace(Binding):
                     eventmsg = ctypes.c_int64(0)
                     if Ptrace.ptrace(Ptrace.PTRACE_GETEVENTMSG, child, 0, ctypes.pointer(eventmsg)) == -1:
                         print("tracer: PTRACE_GETEVENTMSG")
-                        continue
+                        break
                     if event == (SIGTRAP|(Ptrace.PTRACE_EVENT_FORK<<8)) or event == (SIGTRAP|(Ptrace.PTRACE_EVENT_VFORK<<8)) or event == (SIGTRAP|(Ptrace.PTRACE_EVENT_CLONE<<8)):
-                        bind_thread(next(self.resource_list), eventmsg.value)
+                        fn(eventmsg.value, *args, **kwargs)
+                # MPI seams to exit on this status while the others do not work.
+                # os.WIFSTOPPED(4479) = True
+                # os.WSTOPSIG(4479) = SIGCHLD
+                elif sig == SIGCHLD and child == pid:
+                    break
                 if Ptrace.ptrace(Ptrace.PTRACE_CONT, child, 0, 0) == -1:
                     raise Exception('PTRACE_CONT(interrupt)')
-
+                
     def run(self, cmd):
         """
         Subprocess launcher enforcing binding.
@@ -171,9 +197,9 @@ class Ptrace(Binding):
             os.execvp(cmd[0], cmd)
             os._exit(127)
         else:
-            self._trace_pid_(pid)
+            Ptrace.trace_pid(pid, self.bind_next_thread)
             os._exit(0)
-            
+
 class MPI(Binding):
     """
     MPI Binding.
@@ -187,6 +213,19 @@ class MPI(Binding):
     """
     rankid_env = [ 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK' ]
 
+    def __init__(self, resource_list, num_procs=None):
+        super().__init__(resource_list)
+
+        if MPI.is_MPI_process():
+            self.resource = resource_list[MPI.get_rank() % len(resource_list)]
+            self.run = self.run_process
+        elif num_procs is not None:
+            if type(num_procs) is int:
+                self.num_procs=num_procs
+            else:
+                self.num_procs=len(resource_list)
+            self.run = self.mpirun
+
     @staticmethod
     def is_MPI_process():
         """
@@ -199,20 +238,47 @@ class MPI(Binding):
             return False
 
     @staticmethod
-    def get_rank():
+    def get_rank(env=os.environ):
         """
         Return the rank of local mpi process.
         """
+        rankid = next(id for id in MPI.rankid_env if id in env.keys())
+        return int(env[rankid])
+
+
+    def try_bind_process(self, pid):
+        """
+        If mpi process, bind pid
+        """
+        # Get process environment
+        env = open('/proc/{}/environ'.format(pid))
+        env = env.readline()
+        env = env.split('\x00')
+        env = [ l.split('=') for l in env ]
+        env = { i[0]: i[1] if len(i) > 1 else '' for i in env }
+
+        # Look in environment if this pid is a mpi process
         try:
-            rankid = next(id for id in MPI.rankid_env if id in os.environ.keys())
+            rank = MPI.get_rank(env)
+            resource = self.resource_list[rank % len(self.resource_list)]
+            bind_process(resource, pid)
         except StopIteration:
-            raise Exception('Run inside mpi command line.')
-        return int(os.environ[rankid])
+            pass
 
-    def __init__(self, resource_list):
-        self.resource = resource_list[MPI.get_rank() % len(resource_list)]
+    def mpirun(self, cmd, launcher='mpirun'):
+        pid = os.fork()
+        cmd = 'mpirun -np {} {}'.format(self.num_procs, cmd)
+        if pid == 0:
+            pid = os.getpid()
+            cmd = cmd.split()
+            os.kill(pid, SIGSTOP)
+            os.execvp(cmd[0], cmd)
+            os._exit(127)
+        else:
+            Ptrace.trace_pid(pid, self.try_bind_process)
+            os._exit(0)
 
-    def run(self, cmd):
+    def run_process(self, cmd, launcher='mpirun'):
         bind_process(self.resource, os.getpid())
         cmd = cmd.split()
         os.execvp(cmd[0], cmd)
@@ -228,8 +294,7 @@ if __name__ == '__main__':
 
     backends = { 'OpenMP': OpenMP, 'MPI': MPI, 'ptrace': Ptrace }
     
-    def test_binder(binder_name, resources, cmd):
-        binder = backends[binder_name](resources)
+    def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
         out = out.split('\n')
         cpusets = [r.cpuset for r in resources]
@@ -250,20 +315,27 @@ if __name__ == '__main__':
         cmd = test_dir + os.path.sep + 'mpi'
         test_binder('MPI', [resources[rank % len(resources)]], cmd)
         os._exit(0)
-        
+
     shuffle(resources)
     
     # Build tests
     subprocess.getoutput('make -C ' + test_dir)
 
     # Test Openmp
-    cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
-    test_binder('OpenMP', resources, cmd)
+    cmd = test_dir + os.path.sep + 'openmp'
+    binder = OpenMP(resources, num_threads=len(resources))
+    test_binder('OpenMP', binder, resources, cmd)
 
     # Test pthread / ptrace
     cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
-    test_binder('ptrace', resources, cmd)
+    binder = Ptrace(resources)
+    test_binder('pthread + ptrace', binder, resources, cmd)
 
     # Test openmp / ptrace
     cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
-    test_binder('ptrace', resources, cmd)
+    test_binder('OpenMP + ptrace', binder, resources, cmd)
+
+    # Test MPI / ptrace
+    cmd = test_dir + os.path.sep + 'mpi'
+    binder = MPI(resources, num_procs=len(resources))
+    test_binder('MPI + ptrace', binder, resources, cmd)
