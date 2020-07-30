@@ -32,7 +32,7 @@ to these resources.
 python3 -m starbind --help
 ```
 
-See `tmap` pages for more info on permutations. 
+See [tmap](https://github.com/NicolasDenoyelle/tmap) pages for more info on permutations. 
 
 ## Module
 
