@@ -7,7 +7,7 @@
 CC=gcc
 MPICC=mpicc
 CFLAGS=-Wall -Wextra -Werror
-LDFLAGS=-lhwloc
+LDFLAGS=-L/usr/lib/x86_64-linux-gnu -lhwloc
 
 SRC=get_cpubind.c
 BIN=pthread openmp mpi
