@@ -7,6 +7,7 @@
 import os
 import sys
 import ctypes
+import time
 import subprocess
 import re
 from random import shuffle
@@ -180,7 +181,7 @@ class Ptrace(Binding):
                 elif sig == SIGCHLD and child == pid:
                     break
                 if Ptrace.ptrace(Ptrace.PTRACE_CONT, child, 0, 0) == -1:
-                    raise Exception('PTRACE_CONT(interrupt)')
+                    pass # raise Exception('PTRACE_CONT(interrupt)')
                 
     def run(self, cmd):
         """
@@ -220,6 +221,7 @@ class MPI(Binding):
             self.resource = resource_list[MPI.get_rank() % len(resource_list)]
             self.run = self.run_process
         elif num_procs is not None:
+            self.pids = []
             if type(num_procs) is int:
                 self.num_procs=num_procs
             else:
@@ -246,7 +248,7 @@ class MPI(Binding):
         return int(env[rankid])
 
 
-    def try_bind_process(self, pid):
+    def try_bind_process(self, pid, retry = 4):
         """
         If mpi process, bind pid
         """
@@ -262,8 +264,9 @@ class MPI(Binding):
             rank = MPI.get_rank(env)
             resource = self.resource_list[rank % len(self.resource_list)]
             bind_process(resource, pid)
+            return True
         except StopIteration:
-            pass
+            return False
 
     def mpirun(self, cmd, launcher='mpirun'):
         pid = os.fork()
@@ -271,7 +274,6 @@ class MPI(Binding):
         if pid == 0:
             pid = os.getpid()
             cmd = cmd.split()
-            os.kill(pid, SIGSTOP)
             os.execvp(cmd[0], cmd)
             os._exit(127)
         else:
@@ -303,8 +305,9 @@ if __name__ == '__main__':
             print('Test {}: success'.format(binder_name))
         else:
             print('Test {}: failure'.format(binder_name))
-            for x, y in zip(cpusets, out):
-                print('{} {}'.format(x,y))
+            print(cpusets)
+            for l in out:
+                print(l)
 
     test_dir = '{}/{}/tests'.format(os.path.dirname(os.path.abspath(__file__)),
                                     os.path.pardir)
