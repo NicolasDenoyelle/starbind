@@ -103,6 +103,7 @@ class OpenMP(Binding):
             env['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS
         os.execvpe(cmd[0], cmd, env)
 
+    ldd_regex = re.compile('(lib.*omp$)|(lib.*openmp.*)')
     @staticmethod
     def is_OpenMP_application(filename):
         libs = ldd(filename)
@@ -238,6 +239,12 @@ class MPI(Binding):
             return True
         except StopIteration:
             return False
+
+    ldd_regex = re.compile('(lib.*mpi$)|(lib.*mpich)')
+    @staticmethod
+    def is_MPI_application(filename):
+        libs = ldd(filename)
+        return any([ MPI.ldd_regex.match(l) for l in libs ])
 
     @staticmethod
     def get_rank(env=os.environ):

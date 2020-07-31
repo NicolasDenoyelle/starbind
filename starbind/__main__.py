@@ -50,6 +50,9 @@ parser.add_argument('-p', '--permutation',
 parser.add_argument('-c', '--command',
                     help="The command line to run",
                     required=True, type=str)
+parser.add_argument('-n', '--num',
+                    help="The number of threads (OpenMP) or processes (MPI) to set.",
+                    default=None, type=int)
 parser.add_argument('-v', '--verbose',
                     help="Print resource permutattion",
                     default=False, action='store_true')
@@ -66,17 +69,19 @@ if len(resources) == 0:
 permutation = Permutation(len(resources), args.permutation)
 resources = [ resources[i] for i in permutation.elements ]
 
+bin=args.command.split()[0]
+
 # Assign bind method
 if args.method == 'MPI':
-    binder = MPI(resources)
+    binder = MPI(resources, num_procs=args.num)
 elif args.method == 'OpenMP':
-    binder = OpenMP(resources)
+    binder = OpenMP(resources, num_threads=args.num)
 elif args.method == 'ptrace':
     binder = Ptrace(resources)
-elif MPI.is_MPI_process():
-    binder = MPI(resources)
-elif OpenMP.is_OpenMP_application(args.command.split()[0]):
-    binder = OpenMP(resources)
+elif MPI.is_MPI_process() or MPI.is_MPI_application(bin):
+    binder = MPI(resources, num_procs=args.num)
+elif OpenMP.is_OpenMP_application(bin):
+    binder = OpenMP(resources, num_threads=args.num)
 else:
     binder = Ptrace(resources)
 
