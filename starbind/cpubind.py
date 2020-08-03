@@ -84,7 +84,7 @@ class OpenMP(Binding):
     OpenMP bind method will export OMP_PLACES variables.
     Numbering of processing units is using logical indexing.
     """
-    
+
     def __init__(self, resource_list, num_threads=None):
         super().__init__(resource_list)
         places = [ '{{{}}}'.format(','.join([ str(pu.logical_index) for pu in r.PUs ])) for r in resource_list ]
@@ -141,7 +141,7 @@ class Ptrace(Binding):
 
     def bind_next_thread(self, pid):
         bind_thread(next(self.resource_list), pid)
-        
+
     @staticmethod
     def trace_pid(pid, fn, *args, **kwargs):
         """
@@ -183,7 +183,7 @@ class Ptrace(Binding):
                     break
                 if Ptrace.ptrace(Ptrace.PTRACE_CONT, child, 0, 0) == -1:
                     pass # raise Exception('PTRACE_CONT(interrupt)')
-                
+
     def run(self, cmd):
         """
         Subprocess launcher enforcing binding.
@@ -215,8 +215,13 @@ class MPI(Binding):
     """
     rankid_env = [ 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK' ]
 
-    def __init__(self, resource_list, num_procs=None):
+    def __init__(self, resource_list, num_procs=None, env={}):
         super().__init__(resource_list)
+        for k in env.keys():
+            if k in os.environ.keys():
+                os.environ[k] = '{}:{}'.format(os.environ[k], env[k])
+            else:
+                os.environ[k] = env[k]
 
         if MPI.is_MPI_process():
             self.resource = resource_list[MPI.get_rank() % len(resource_list)]
@@ -276,12 +281,12 @@ class MPI(Binding):
             return False
 
     def mpirun(self, cmd, launcher='mpirun'):
-        pid = os.fork()
         cmd = 'mpirun -np {} {}'.format(self.num_procs, cmd)
+        pid = os.fork()
         if pid == 0:
             pid = os.getpid()
             cmd = cmd.split()
-            os.execvp(cmd[0], cmd)
+            os.execvpe(cmd[0], cmd, os.environ)
             os._exit(127)
         else:
             Ptrace.trace_pid(pid, self.try_bind_process)
@@ -302,7 +307,7 @@ if __name__ == '__main__':
     from tmap.topology import topology
 
     backends = { 'OpenMP': OpenMP, 'MPI': MPI, 'ptrace': Ptrace }
-    
+
     def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
         out = out.split('\n')
@@ -327,7 +332,7 @@ if __name__ == '__main__':
         os._exit(0)
 
     shuffle(resources)
-    
+
     # Build tests
     subprocess.getoutput('make -C ' + test_dir)
 
