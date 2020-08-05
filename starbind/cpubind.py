@@ -205,61 +205,47 @@ class Ptrace(Binding):
             os._exit(0)
 
 class MPI(Binding):
-    """
-    MPI Binding.
-    Look for 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK' in environment.
-    If one of these variables is defined then MPI binding with use the local
-    rank as an index among resources list to bind the local process.
-    """
+    ldd_regex = re.compile('(lib.*mpi$)|(lib.*mpich)')
 
-    """
-    Local rank environment variables.
-    """
-    rankid_env = [ 'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK' ]
+    rank_regex = re.compile('.*MPI.*LOCAL_RANK.*')
 
     def __init__(self, resource_list, num_procs=None, env={}):
-        super().__init__(resource_list)
+        Binding.__init__(self, resource_list)
         for k in env.keys():
             if k in os.environ.keys():
                 os.environ[k] = '{}:{}'.format(os.environ[k], env[k])
             else:
                 os.environ[k] = env[k]
-
         if MPI.is_MPI_process():
-            self.resource = resource_list[MPI.get_rank() % len(resource_list)]
-            self.run = self.run_process
-        elif num_procs is not None:
-            self.pids = []
-            if type(num_procs) is int:
-                self.num_procs=num_procs
-            else:
-                self.num_procs=len(resource_list)
-            self.run = self.mpirun
+            resource = resource_list[MPI.get_rank() % len(resource_list)]
+            bind_process(resource, os.getpid())
+        else:
+            self.run = lambda cmd: MPI.mpirun(self.launcher, cmd)
 
     @staticmethod
-    def is_MPI_process():
-        """
-        Return True if one of local rank environment variables are defined.
-        """
-        try:
-            next(id for id in MPI.rankid_env if id in os.environ.keys())
-            return True
-        except StopIteration:
-            return False
+    def mpirun(launcher, cmd):
+        cmd = '{} {}'.format(launcher, cmd)
+        cmd = cmd.split()
+        os.execvpe(cmd[0], cmd, os.environ)
 
-    ldd_regex = re.compile('(lib.*mpi$)|(lib.*mpich)')
     @staticmethod
     def is_MPI_application(filename):
         libs = ldd(filename)
         return any([ MPI.ldd_regex.match(l) for l in libs ])
 
     @staticmethod
+    def is_MPI_process():
+        """
+        Return True if one of local rank environment variables are defined.
+        """
+        return any(MPI.rank_regex.match(k) for k in os.environ.keys())
+
+    @staticmethod
     def get_rank(env=os.environ):
         """
         Return the rank of local mpi process.
         """
-        rankid = next(id for id in MPI.rankid_env if id in env.keys())
-        return int(env[rankid])
+        return int(next(v for k,v in env.items() if MPI.rank_regex.match(k)))
 
 
     def try_bind_process(self, pid, retry = 4):
