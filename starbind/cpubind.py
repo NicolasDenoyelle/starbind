@@ -221,6 +221,7 @@ class MPI(Binding):
             bind_process(resource, os.getpid())
         else:
             launcher = '{} -np {}'.format(launcher, num_procs)
+            self.launcher = launcher
             self.run = lambda cmd: MPI.mpirun(launcher, cmd)
 
     @staticmethod
@@ -255,7 +256,7 @@ class OpenMPI(MPI, Binding):
     def __init__(self, resource_list, num_procs=None, env={}):
         num_procs = num_procs if num_procs is not None else len(resource_list)
         binding = ','.join([ str(r.PUs[0].logical_index) for r in resource_list ])
-        launcher = 'mpirun -cpu-list {}'.format(self.num_procs, binding)
+        launcher = 'mpirun -cpu-list {}'.format(binding)
         MPI.__init__(self, resource_list, num_procs, env, launcher)
         if not MPI.is_MPI_process():
             self.run = self.mpirun
@@ -281,7 +282,7 @@ class OpenMPI(MPI, Binding):
             return False
 
     def mpirun(self, cmd):
-        cmd = 'mpirun -np {} {}'.format(self.num_procs, cmd)
+        cmd = '{} {}'.format(self.launcher, cmd)
         pid = os.fork()
         if pid == 0:
             pid = os.getpid()
