@@ -8,23 +8,24 @@
 
 import argparse
 import re
-from starbind import MPI, OpenMP, Ptrace
+from starbind import MPI, OpenMPI, MPICH, OpenMP, Ptrace
 from tmap.topology import Topology
 from tmap.permutation import Permutation
 
 parser = argparse.ArgumentParser()    
 parser.add_argument('-m', '--method',
-                    choices = ['MPI', 'OpenMP', 'ptrace', 'auto'],
+                    choices = ['OpenMPI', 'MPICH', 'OpenMP', 'ptrace', 'auto'],
                     default = 'auto',
                     help='''
-MPI: starbind is used inside a mpi command line to
-bind the local process. Starbind will look for
-'MPI_LOCALRANKID', 'OMPI_COMM_WORLD_LOCAL_RANK' in
-environment too define the index to pick a resource
-in resource list. Only MPI processes will be bound.
-Starbind can also be used as a MPI launcher. In that
-case, MPI child processes will be tracked with ptrace
-and bound. See ptrace.
+OpenMPI, MPICH: starbind is used inside a mpi command
+line to bind the local process. Depending on weather
+it is MPICH or OpenMPI, binding is made via the
+command line or via the interception of subprocesses
+and their environment variables 'MPI_LOCALRANKID',
+'OMPI_COMM_WORLD_LOCAL_RANK'.
+Only MPI processes will be bound. Starbind can be used
+inside MPI command line or outside and it will use
+mpirun.
 ------------------------------------------------------
 OpenMP: starbind is used to launch an OpenMP
 application and bind its threads. Envrionment variable
@@ -81,14 +82,16 @@ resources = [ resources[i] for i in permutation.elements ]
 bin=args.command.split()[0]
 
 # Assign bind method
-if args.method == 'MPI':
-    binder = MPI(resources, num_procs=args.num)
+if args.method == 'OpenMPI':
+    binder = OpenMPI(resources, num_procs=args.num)
+if args.method == 'MPICH':
+    binder = MPICH(resources, num_procs=args.num)
 elif args.method == 'OpenMP':
     binder = OpenMP(resources, num_threads=args.num)
 elif args.method == 'ptrace':
     binder = Ptrace(resources)
 elif MPI.is_MPI_process() or MPI.is_MPI_application(bin):
-    binder = MPI(resources, num_procs=args.num)
+    binder = OpenMPI(resources, num_procs=args.num)
 elif OpenMP.is_OpenMP_application(bin):
     binder = OpenMP(resources, num_threads=args.num)
 else:
