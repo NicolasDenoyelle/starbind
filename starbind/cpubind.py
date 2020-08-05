@@ -328,7 +328,6 @@ if __name__ == '__main__':
                                     os.path.pardir)
     resources = [ n for n in topology if n.type.upper() == 'CORE' ]
 
-
     if OpenMPI.is_MPI_process():
         rank = OpenMPI.get_rank()
         cmd = test_dir + os.path.sep + 'mpi'
@@ -347,16 +346,21 @@ if __name__ == '__main__':
     binder = OpenMP(resources, num_threads=len(resources))
     test_binder('OpenMP', binder, resources, cmd)
 
+    # Test openmp / ptrace
+    cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
+    test_binder('OpenMP + ptrace', binder, resources, cmd)
+
+    # Test OpenMPI / ptrace
+    cmd = test_dir + os.path.sep + 'mpi'
+    binder = OpenMPI(resources, num_procs=len(resources))
+    test_binder('OpenMPI + ptrace', binder, resources, cmd)
+    
     # Test pthread / ptrace
     cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
     binder = Ptrace(resources)
     test_binder('pthread + ptrace', binder, resources, cmd)
 
-    # Test openmp / ptrace
-    cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
-    test_binder('OpenMP + ptrace', binder, resources, cmd)
-
-    # Test MPI / ptrace
-    cmd = test_dir + os.path.sep + 'mpi'
-    binder = MPI(resources, num_procs=len(resources))
-    test_binder('MPI + ptrace', binder, resources, cmd)
+    # Test MPICH
+    # cmd = test_dir + os.path.sep + 'mpi'
+    # binder = MPICH(resources, num_procs=len(resources))
+    # test_binder('MPICH', binder, resources, cmd)
