@@ -209,7 +209,7 @@ class MPI(Binding):
 
     rank_regex = re.compile('.*MPI.*LOCAL_RANK.*')
 
-    def __init__(self, resource_list, num_procs=None, env={}):
+    def __init__(self, resource_list, num_procs, env={}, launcher='mpirun'):
         Binding.__init__(self, resource_list)
         for k in env.keys():
             if k in os.environ.keys():
@@ -220,7 +220,8 @@ class MPI(Binding):
             resource = resource_list[MPI.get_rank() % len(resource_list)]
             bind_process(resource, os.getpid())
         else:
-            self.run = lambda cmd: MPI.mpirun(self.launcher, cmd)
+            launcher = '{} -np {}'.format(launcher, num_procs)
+            self.run = lambda cmd: MPI.mpirun(launcher, cmd)
 
     @staticmethod
     def mpirun(launcher, cmd):
@@ -252,10 +253,10 @@ class OpenMPI(MPI, Binding):
     MPI binding for OpenMPI.
     """
     def __init__(self, resource_list, num_procs=None, env={}):
-        MPI.__init__(self, resource_list, env)
-        self.num_procs = num_procs if num_procs is not None else len(resource_list)
+        num_procs = num_procs if num_procs is not None else len(resource_list)
         binding = ','.join([ str(r.PUs[0].logical_index) for r in resource_list ])
-        self.launcher = 'mpirun -np {} -cpu-list {}'.format(self.num_procs, binding)
+        launcher = 'mpirun -cpu-list {}'.format(self.num_procs, binding)
+        MPI.__init__(self, resource_list, num_procs, env, launcher)
         if not MPI.is_MPI_process():
             self.run = self.mpirun
 
@@ -296,11 +297,11 @@ class MPICH(Binding):
     MPI binding for MPICH.
     """
     def __init__(self, resource_list, num_procs=None, env={}):
-        MPI.__init__(self, resource_list, env)
         num_procs = num_procs if num_procs is not None else len(resource_list)
         binding = [ '+'.join([ str(pu.os_index) for pu in r.PUs]) for r in resource_list ]
         binding = 'user:{}'.format(','.join(binding))
-        self.launcher = 'mpirun -np {} -bind-to {}'.format(num_procs, binding)
+        launcher = 'mpirun -launcher fork -np {} -bind-to {}'.format(num_procs, binding)
+        MPI.__init__(self, resource_list, num_procs, env, launcher)
 
 #########################################################################################
 
@@ -326,7 +327,7 @@ if __name__ == '__main__':
 
     test_dir = '{}/{}/tests'.format(os.path.dirname(os.path.abspath(__file__)),
                                     os.path.pardir)
-    resources = [ n for n in topology if n.type.upper() == 'CORE' ]
+    resources = [ n for n in topology if n.type.upper() == 'PU' ]
 
     if OpenMPI.is_MPI_process():
         rank = OpenMPI.get_rank()
@@ -335,7 +336,7 @@ if __name__ == '__main__':
         test_binder('OpenMPI', mpi, [resources[rank % len(resources)]], cmd)
         os._exit(0)
 
-    shuffle(resources)
+    # shuffle(resources)
     resources = resources[0:min(8,len(resources))]
 
     # Build tests
