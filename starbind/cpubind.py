@@ -87,7 +87,7 @@ class OpenMP(Binding):
 
     def __init__(self, resource_list, num_threads=None):
         super().__init__(resource_list)
-        places = [ '{{{}}}'.format(','.join([ str(pu.logical_index) for pu in r.PUs ])) for r in resource_list ]
+        places = [ '{{{}}}'.format(','.join([ str(pu.os_index) for pu in r.PUs ])) for r in resource_list ]
         places = '{}'.format(', '.join(places))
         self.OMP_PLACES=places
         if num_threads is not None:
