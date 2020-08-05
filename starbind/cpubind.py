@@ -52,13 +52,13 @@ class Binding:
         """
         self.resource_list = resource_list
 
-    def run(self, cmd):
+    def run(self, cmd, env=os.environ):
         """
         Subprocess launcher enforcing binding.
         @param cmd: The command line string to launch.
         """
         cmd = cmd.split()
-        return excevp(cmd[0], cmd)
+        return os.execvpe(cmd[0], cmd, env)
 
     def getoutput(self, cmd):
         """
