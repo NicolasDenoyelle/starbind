@@ -247,6 +247,17 @@ class MPI(Binding):
         """
         return int(next(v for k,v in env.items() if MPI.rank_regex.match(k)))
 
+class OpenMPI(MPI, Binding):
+    """
+    MPI binding for OpenMPI.
+    """
+    def __init__(self, resource_list, num_procs=None, env={}):
+        MPI.__init__(self, resource_list, env)
+        self.num_procs = num_procs if num_procs is not None else len(resource_list)
+        binding = ','.join([ str(r.PUs[0].logical_index) for r in resource_list ])
+        self.launcher = 'mpirun -np {} -cpu-list {}'.format(self.num_procs, binding)
+        if not MPI.is_MPI_process():
+            self.run = self.mpirun
 
     def try_bind_process(self, pid, retry = 4):
         """
