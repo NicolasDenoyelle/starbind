@@ -279,7 +279,7 @@ class OpenMPI(MPI, Binding):
         except StopIteration:
             return False
 
-    def mpirun(self, cmd, launcher='mpirun'):
+    def mpirun(self, cmd):
         cmd = 'mpirun -np {} {}'.format(self.num_procs, cmd)
         pid = os.fork()
         if pid == 0:
@@ -291,21 +291,25 @@ class OpenMPI(MPI, Binding):
             Ptrace.trace_pid(pid, self.try_bind_process)
             os._exit(0)
 
-    def run_process(self, cmd, launcher='mpirun'):
-        bind_process(self.resource, os.getpid())
-        cmd = cmd.split()
-        os.execvp(cmd[0], cmd)
+class MPICH(Binding):
+    """
+    MPI binding for MPICH.
+    """
+    def __init__(self, resource_list, num_procs=None, env={}):
+        MPI.__init__(self, resource_list, env)
+        num_procs = num_procs if num_procs is not None else len(resource_list)
+        binding = [ '+'.join([ str(pu.os_index) for pu in r.PUs]) for r in resource_list ]
+        binding = 'user:{}'.format(','.join(binding))
+        self.launcher = 'mpirun -np {} -bind-to {}'.format(num_procs, binding)
 
 #########################################################################################
 
-__all__ = [ 'OpenMP', 'MPI', 'Ptrace' ]
+__all__ = [ 'OpenMP', 'OpenMPI', 'MPICH', 'Ptrace' ]
 
 #########################################################################################
 
 if __name__ == '__main__':
     from tmap.topology import topology
-
-    backends = { 'OpenMP': OpenMP, 'MPI': MPI, 'ptrace': Ptrace }
 
     def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
@@ -324,13 +328,16 @@ if __name__ == '__main__':
                                     os.path.pardir)
     resources = [ n for n in topology if n.type.upper() == 'CORE' ]
 
-    if MPI.is_MPI_process():
-        rank =MPI.get_rank()
+
+    if OpenMPI.is_MPI_process():
+        rank = OpenMPI.get_rank()
         cmd = test_dir + os.path.sep + 'mpi'
-        test_binder('MPI', [resources[rank % len(resources)]], cmd)
+        mpi = OpenMPI(resources, len(resources))
+        test_binder('OpenMPI', mpi, [resources[rank % len(resources)]], cmd)
         os._exit(0)
 
     shuffle(resources)
+    resources = resources[0:min(8,len(resources))]
 
     # Build tests
     subprocess.getoutput('make -C ' + test_dir)
