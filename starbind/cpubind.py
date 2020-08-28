@@ -278,9 +278,6 @@ class OpenMPI(MPI):
     
         MPI.__init__(self, resource_list, num_procs, env,
                      launcher="mpirun -H {} --bind-to hwthread -rf {}".format(hostname, self.rankfile))
-        # MPI.__init__(self, resource_list, num_procs, env,
-        #              launcher="mpirun --cpu-set {}".format(','.join([r.cpuset for r in resource_list])))
-        print(self.launcher)
 
     def __del__(self):
         os.remove(self.rankfile)
