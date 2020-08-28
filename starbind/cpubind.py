@@ -11,9 +11,10 @@ import time
 import subprocess
 import re
 from random import shuffle
-from tempfile import TemporaryFile as tmp
+from tempfile import mkstemp as tmp
 from itertools import cycle
 from signal import SIGSTOP, SIGCONT, SIGTRAP, SIGKILL, SIGCHLD
+from socket import gethostname
 
 def ldd(file):
     """
@@ -51,6 +52,9 @@ class Binding:
         @param resource_list: A list of topology objects. See tmap.topology.
         """
         self.resource_list = resource_list
+
+    def __str__(self):
+        return str(self.resource_list)
 
     def run(self, cmd, env=os.environ):
         """
@@ -96,6 +100,9 @@ class OpenMP(Binding):
             else:
                 self.OMP_NUM_THREADS=str(len(resource_list))
 
+    def __str__(self):
+        return self.OMP_PLACES
+
     def run(self, cmd, num_threads=False):
         cmd = cmd.split()
         env = { 'OMP_PLACES': self.OMP_PLACES }
@@ -139,10 +146,11 @@ class Ptrace(Binding):
         """
         Ptrace resource_list initializer is cycling on resource list in a round-robin fashion.
         """
-        self.resource_list = cycle(resource_list)
+        self.resources = cycle(resource_list)
+        super().__init__(resource_list)
 
     def bind_next_thread(self, pid):
-        bind_thread(next(self.resource_list), pid)
+        bind_thread(next(self.resources), pid)
 
     @staticmethod
     def trace_pid(pid, fn, *args, **kwargs):
@@ -206,7 +214,6 @@ class Ptrace(Binding):
 
 class MPI(Binding):
     ldd_regex = re.compile('(lib.*mpi$)|(lib.*mpich)')
-
     rank_regex = re.compile('.*MPI.*LOCAL_RANK.*')
 
     def __init__(self, resource_list, num_procs, env={}, launcher='mpirun'):
@@ -249,51 +256,40 @@ class MPI(Binding):
         """
         return int(next(v for k,v in env.items() if MPI.rank_regex.match(k)))
 
-class OpenMPI(MPI, Binding):
+class OpenMPI(MPI):
     """
     MPI binding for OpenMPI.
     """
+
     def __init__(self, resource_list, num_procs=None, env={}):
-        num_procs = num_procs if num_procs is not None else len(resource_list)
-        binding = ','.join([ str(r.PUs[0].logical_index) for r in resource_list ])
-        launcher = 'mpirun -cpu-list {}'.format(binding)
-        MPI.__init__(self, resource_list, num_procs, env, launcher)
-        if not MPI.is_MPI_process():
-            self.run = self.mpirun
+        # write rankfile
+        f, fname = tmp(dir=os.getcwd(), text=True)
+        file = os.fdopen(f, 'w')
+        self.rankfile = fname
+        hostname=gethostname()
 
-    def try_bind_process(self, pid, retry = 4):
-        """
-        If mpi process, bind pid
-        """
-        # Get process environment
-        env = open('/proc/{}/environ'.format(pid))
-        env = env.readline()
-        env = env.split('\x00')
-        env = [ l.split('=') for l in env ]
-        env = { i[0]: i[1] if len(i) > 1 else '' for i in env }
+        for i, resource in zip(range(len(resource_list)), resource_list):
+            cpus=str(resource.PUs[0].logical_index)
+            if len(resource.PUs) > 1:
+                cpus += '-{}'.format(resource.PUs[-1].logical_index)
+            line="rank {}={} slot={}".format(i, hostname, cpus)
+            file.write(line + '\n')
+        file.close()
+    
+        MPI.__init__(self, resource_list, num_procs, env,
+                     launcher="mpirun -H {} --bind-to hwthread -rf {}".format(hostname, self.rankfile))
+        # MPI.__init__(self, resource_list, num_procs, env,
+        #              launcher="mpirun --cpu-set {}".format(','.join([r.cpuset for r in resource_list])))
+        print(self.launcher)
 
-        # Look in environment if this pid is a mpi process
-        try:
-            rank = MPI.get_rank(env)
-            resource = self.resource_list[rank % len(self.resource_list)]
-            bind_process(resource, pid)
-            return True
-        except StopIteration:
-            return False
+    def __del__(self):
+        os.remove(self.rankfile)
 
-    def mpirun(self, cmd):
-        cmd = '{} {}'.format(self.launcher, cmd)
-        pid = os.fork()
-        if pid == 0:
-            pid = os.getpid()
-            cmd = cmd.split()
-            os.execvpe(cmd[0], cmd, os.environ)
-            os._exit(127)
-        else:
-            Ptrace.trace_pid(pid, self.try_bind_process)
-            os._exit(0)
+    def __str__(self):
+        with open(self.rankfile, 'r') as f:
+            return ''.join(f.readlines())
 
-class MPICH(Binding):
+class MPICH(MPI):
     """
     MPI binding for MPICH.
     """
@@ -301,8 +297,11 @@ class MPICH(Binding):
         num_procs = num_procs if num_procs is not None else len(resource_list)
         binding = [ '+'.join([ str(pu.os_index) for pu in r.PUs]) for r in resource_list ]
         binding = 'user:{}'.format(','.join(binding))
-        launcher = 'mpirun -launcher fork -np {} -bind-to {}'.format(num_procs, binding)
+        launcher = 'mpirun -launcher fork -bind-to {}'.format(binding)
         MPI.__init__(self, resource_list, num_procs, env, launcher)
+
+    def __str__(self):
+        return '{}'.format(self.launcher)
 
 #########################################################################################
 
@@ -311,8 +310,8 @@ __all__ = [ 'MPI', 'OpenMP', 'OpenMPI', 'MPICH', 'Ptrace' ]
 #########################################################################################
 
 if __name__ == '__main__':
-    from tmap.topology import topology
-
+    from tmap import topology
+    
     def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
         out = out.split('\n')
@@ -322,22 +321,23 @@ if __name__ == '__main__':
             print('Test {}: success'.format(binder_name))
         else:
             print('Test {}: failure'.format(binder_name))
-            print(cpusets)
+            print('Expected cpusets: \n\t{}'.format('\n\t'.join(cpusets)))
+            print('Got output:')
             for l in out:
-                print(l)
+                print('\t' + l)
 
     test_dir = '{}/{}/tests'.format(os.path.dirname(os.path.abspath(__file__)),
                                     os.path.pardir)
-    resources = [ n for n in topology if n.type.upper() == 'PU' ]
+    resources = [ n for n in topology if n.type.upper() == 'CORE' ]
 
-    if OpenMPI.is_MPI_process():
-        rank = OpenMPI.get_rank()
+    if MPI.is_MPI_process():
+        rank = MPI.get_rank()
         cmd = test_dir + os.path.sep + 'mpi'
-        mpi = OpenMPI(resources, len(resources))
-        test_binder('OpenMPI', mpi, [resources[rank % len(resources)]], cmd)
+        mpi = MPI(resources, len(resources))
+        test_binder('MPI', mpi, [resources[rank % len(resources)]], cmd)
         os._exit(0)
 
-    # shuffle(resources)
+    shuffle(resources)
     resources = resources[0:min(8,len(resources))]
 
     # Build tests
@@ -352,15 +352,15 @@ if __name__ == '__main__':
     cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
     test_binder('OpenMP + ptrace', binder, resources, cmd)
 
-    # Test OpenMPI / ptrace
+    # Test OpenMPI
     cmd = test_dir + os.path.sep + 'mpi'
     binder = OpenMPI(resources, num_procs=len(resources))
-    test_binder('OpenMPI + ptrace', binder, resources, cmd)
+    test_binder('OpenMPI', binder, resources, cmd)
     
     # Test pthread / ptrace
-    cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
-    binder = Ptrace(resources)
-    test_binder('pthread + ptrace', binder, resources, cmd)
+    # cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
+    # binder = Ptrace(resources)
+    # test_binder('pthread + ptrace', binder, resources, cmd)
 
     # Test MPICH
     # cmd = test_dir + os.path.sep + 'mpi'
