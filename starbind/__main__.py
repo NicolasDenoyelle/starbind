@@ -107,5 +107,5 @@ if args.verbose:
         print('Bind to: {!s}'.format(resources))
         print('Bind with {}'.format(binder.__class__.__name__))
 
-#Run command
+# Run command
 binder.run(args.command)
