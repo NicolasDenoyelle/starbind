@@ -105,10 +105,10 @@ class OpenMP(Binding):
 
     def run(self, cmd, num_threads=False):
         cmd = cmd.split()
-        env = { 'OMP_PLACES': self.OMP_PLACES }
+        os.environ['OMP_PLACES'] = self.OMP_PLACES
         if hasattr(self, 'OMP_NUM_THREADS'):
-            env['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS
-        os.execvpe(cmd[0], cmd, env)
+            os.environ['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS
+        os.execvpe(cmd[0], cmd, os.environ)
 
     ldd_regex = re.compile('(lib.*omp$)|(lib.*openmp.*)')
     @staticmethod
