@@ -97,11 +97,11 @@ class OpenMP(Binding):
         if num_threads is not None:
             if type(num_threads) is int:
                 self.OMP_NUM_THREADS=str(num_threads)
-            else:
-                self.OMP_NUM_THREADS=str(len(resource_list))
+        else:
+            self.OMP_NUM_THREADS=str(len(resource_list))
 
     def __str__(self):
-        return self.OMP_PLACES
+        return 'OMP_NUM_THREADS:{}\nOMP_PLACES{}'.format(self.OMP_NUM_THREADS, self.OMP_PLACES)
 
     def run(self, cmd, num_threads=False):
         cmd = cmd.split()
@@ -268,6 +268,7 @@ class OpenMPI(MPI):
         self.rankfile = fname
         hostname=gethostname()
 
+        num_procs = num_procs if num_procs is not None else len(resource_list)
         for i, resource in zip(range(len(resource_list)), resource_list):
             cpus=str(resource.PUs[0].logical_index)
             if len(resource.PUs) > 1:
@@ -277,14 +278,14 @@ class OpenMPI(MPI):
         file.close()
     
         MPI.__init__(self, resource_list, num_procs, env,
-                     launcher="mpirun -H {} --bind-to hwthread -rf {}".format(hostname, self.rankfile))
+                     launcher="mpirun --bind-to hwthread -rf {}".format(self.rankfile))
 
     def __del__(self):
         os.remove(self.rankfile)
 
     def __str__(self):
         with open(self.rankfile, 'r') as f:
-            return ''.join(f.readlines())
+            return '{}\n{}'.format(self.launcher, ''.join(f.readlines()))
 
 class MPICH(MPI):
     """

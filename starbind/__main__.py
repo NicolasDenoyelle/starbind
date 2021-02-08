@@ -8,6 +8,7 @@
 
 import argparse
 import re
+import os
 from starbind import MPI, OpenMPI, MPICH, OpenMP, Ptrace
 from tmap.topology import Topology
 from tmap.permutation import Permutation
@@ -54,6 +55,9 @@ found, ptrace is used.''')
 parser.add_argument('-t', '--type',
                     help="Topology object type used to bind threads",
                     default='Core', type=str)
+parser.add_argument('-s', '--singlify',
+                    help="Restrict topology to one processing unit per binding object.",
+                    default=False, action='store_true')
 parser.add_argument('-p', '--permutation',
                     help="A permutation id to reorder topology objects.",
                     default=0, type=int)
@@ -70,7 +74,10 @@ args = parser.parse_args()
 
 # Get the list of topology resources
 topology = Topology(structure=False)
-resources = [ n for n in topology if args.type.lower() in n.type.lower() ]
+resources = [ n for n in topology if hasattr(n, 'type') and args.type.lower() in n.type.lower() ]
+if args.singlify:
+    for r in resources:
+        r.PUs = [ r.PUs[0] ]
 if len(resources) == 0:
     raise ValueError('Invalid topology type {}. Valid types are: {}'\
                      .format(args.type, set(n.type for n in topology)))
