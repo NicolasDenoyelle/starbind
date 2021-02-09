@@ -308,7 +308,7 @@ __all__ = [ 'MPI', 'OpenMP', 'OpenMPI', 'MPICH', 'Ptrace' ]
 #########################################################################################
 
 if __name__ == '__main__':
-    from tmap import topology
+    from tmap.topology import topology
     
     def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
@@ -326,7 +326,7 @@ if __name__ == '__main__':
 
     test_dir = '{}/{}/tests'.format(os.path.dirname(os.path.abspath(__file__)),
                                     os.path.pardir)
-    resources = [ n for n in topology if n.type.upper() == 'CORE' ]
+    resources = [ n for n in topology if hasattr(n, 'type') and n.type.upper() == 'CORE' ]
 
     if MPI.is_MPI_process():
         rank = MPI.get_rank()
