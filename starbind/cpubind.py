@@ -10,7 +10,6 @@ import ctypes
 import time
 import subprocess
 import re
-from random import shuffle
 from tempfile import mkstemp as tmp
 from itertools import cycle
 from signal import SIGSTOP, SIGCONT, SIGTRAP, SIGKILL, SIGCHLD
@@ -261,24 +260,87 @@ class OpenMPI(MPI):
     MPI binding for OpenMPI.
     """
 
-    def __init__(self, resource_list, num_procs=None, env={}):
-        # write rankfile
-        f, fname = tmp(dir=os.getcwd(), text=True)
-        file = os.fdopen(f, 'w')
-        self.rankfile = fname
+    RESOURCE_MAP = {
+        'PU': 'hwthread',
+        'Core': 'core',
+        'L1Cache': 'l1cache',
+        'L2Cache': 'l2cache',
+        # 'L3Cache': 'l3cache', # Not working
+        # 'Package': 'socket', # Not working
+        # 'Machine': 'board', # Not working
+    }
+
+    @staticmethod
+    def _rankfile_(resources):
+        """
+        Return a list of strings where each item is a line of the rankfile
+        binding in the order of the resource list.
+        """
         hostname=gethostname()
 
-        num_procs = num_procs if num_procs is not None else len(resource_list)
-        for i, resource in zip(range(len(resource_list)), resource_list):
-            cpus=str(resource.PUs[0].logical_index)
-            if len(resource.PUs) > 1:
-                cpus += '-{}'.format(resource.PUs[-1].logical_index)
-            line="rank {}={} slot={}".format(i, hostname, cpus)
-            file.write(line + '\n')
-        file.close()
+        # If all resources are of the same type, the knob `--bind-to` will be
+        # set to this resource and we just have to output slots for these
+        # resources logical index.
+        if all([ r.type==resources[0].type for r in resources]) and\
+           resources[0].type in OpenMPI.RESOURCE_MAP.keys():
+            return [ "rank {}={} slot={}".format(i, hostname, r.logical_index) for i, r in zip(range(len(resources)), resources) ]
+
+        # If resources are heterogeneous, then we need to specify ranges or
+        # hardware threads
+        lines = []
+        for i, r in zip(range(len(resources)), resources):
+            cpus=str(r.PUs[0].logical_index)
+            if len(r.PUs) > 1:
+                cpus += '-{}'.format(r.PUs[-1].logical_index)
+            lines.append("rank {}={} slot={}".format(i, hostname, cpus))
+        return lines
+
+    @staticmethod
+    def _bindto_knob_(resources):
+        """
+        Returns the knob specifying the type of objects to bind to.
+        If all resources are of the same type then the knob is to bind to this
+        type of resource and the rankfile will be set to this resource logical 
+        indexes.
+        If resources are heterogeneous, then the binding is done at the 
+        hardware thread granularity and the rankfile will bind hardware threads.
+
+        OpenMPI option:
+        ```
+        --bind-to <arg0>      Policy for binding processes. Allowed values: none,
+                      hwthread, core, l1cache, l2cache, l3cache, socket,
+                      numa, board, cpu-list ("none" is the default when
+                      oversubscribed, "core" is the default when np<=2,
+                      and "socket" is the default when np>2). Allowed
+                      qualifiers: overload-allowed, if-supported,
+                      ordered
+        ```
+        """
+        if all([ r.type==resources[0].type for r in resources]):
+            try:
+                return '--bind-to {}'.format(OpenMPI.RESOURCE_MAP[resources[0].type])
+            except KeyError:
+                pass
+        return '--bind-to hwthread'
     
-        MPI.__init__(self, resource_list, num_procs, env,
-                     launcher="mpirun --bind-to hwthread -rf {}".format(self.rankfile))
+    def __init__(self, resource_list, num_procs=None,
+                 env={},
+                 knobs=['--mca btl_openib_allow_ib 1',
+                        '--mca mtl psm2',
+                        '--mca pml_monitoring_enable 1']):
+        
+        # Write rankfile
+        f, self.rankfile = tmp(dir=os.getcwd(), text=True)
+        file = os.fdopen(f, 'w')
+        for l in OpenMPI._rankfile_(resources):
+            file.write(l + '\n')
+        file.close()
+
+        # Set knobs
+        knobs.append(OpenMPI._bindto_knob_(resources))
+        launcher = 'mpirun {} -rf {}'.format(' '.join(knobs), self.rankfile)
+    
+        MPI.__init__(self, resource_list, num_procs, env, launcher=launcher)
 
     def __del__(self):
         os.remove(self.rankfile)
@@ -309,6 +371,9 @@ __all__ = [ 'MPI', 'OpenMP', 'OpenMPI', 'MPICH', 'Ptrace' ]
 
 if __name__ == '__main__':
     from tmap.topology import topology
+    from random import sample
+    from math import ceil
+    from os import _exit
     
     def test_binder(binder_name, binder, resources, cmd):
         out = binder.getoutput(cmd)
@@ -319,48 +384,54 @@ if __name__ == '__main__':
             print('Test {}: success'.format(binder_name))
         else:
             print('Test {}: failure'.format(binder_name))
+            print('Resources: {}'.format(resources))
             print('Expected cpusets: \n\t{}'.format('\n\t'.join(cpusets)))
             print('Got output:')
             for l in out:
                 print('\t' + l)
 
+    def test_resources(resources):
+        if MPI.is_MPI_process():
+            rank = MPI.get_rank()
+            cmd = test_dir + os.path.sep + 'mpi'
+            mpi = MPI(resources, len(resources))
+            test_binder('MPI', mpi, [resources[rank % len(resources)]], cmd)
+            os._exit(0)
+
+        # Test Openmp
+        cmd = test_dir + os.path.sep + 'openmp'
+        binder = OpenMP(resources, num_threads=len(resources))
+        test_binder('OpenMP', binder, resources, cmd)
+
+        # Test openmp / ptrace
+        cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
+        test_binder('OpenMP + ptrace', binder, resources, cmd)
+
+        # Test OpenMPI
+        cmd = test_dir + os.path.sep + 'mpi'
+        binder = OpenMPI(resources, num_procs=len(resources))
+        test_binder('OpenMPI', binder, resources, cmd)
+    
+        # Test pthread / ptrace
+        # cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
+        # binder = Ptrace(resources)
+        # test_binder('pthread + ptrace', binder, resources, cmd)
+
+        # Test MPICH
+        # cmd = test_dir + os.path.sep + 'mpi'
+        # binder = MPICH(resources, num_procs=len(resources))
+        # test_binder('MPICH', binder, resources, cmd)
+
+
     test_dir = '{}/{}/tests'.format(os.path.dirname(os.path.abspath(__file__)),
                                     os.path.pardir)
-    resources = [ n for n in topology if hasattr(n, 'type') and n.type.upper() == 'CORE' ]
-
-    if MPI.is_MPI_process():
-        rank = MPI.get_rank()
-        cmd = test_dir + os.path.sep + 'mpi'
-        mpi = MPI(resources, len(resources))
-        test_binder('MPI', mpi, [resources[rank % len(resources)]], cmd)
-        os._exit(0)
-
-    shuffle(resources)
-    resources = resources[0:min(8,len(resources))]
-
     # Build tests
     subprocess.getoutput('make -C ' + test_dir)
 
-    # Test Openmp
-    cmd = test_dir + os.path.sep + 'openmp'
-    binder = OpenMP(resources, num_threads=len(resources))
-    test_binder('OpenMP', binder, resources, cmd)
-
-    # Test openmp / ptrace
-    cmd = test_dir + os.path.sep + 'openmp ' + str(len(resources))
-    test_binder('OpenMP + ptrace', binder, resources, cmd)
-
-    # Test OpenMPI
-    cmd = test_dir + os.path.sep + 'mpi'
-    binder = OpenMPI(resources, num_procs=len(resources))
-    test_binder('OpenMPI', binder, resources, cmd)
-    
-    # Test pthread / ptrace
-    # cmd = test_dir + os.path.sep + 'pthread ' + str(len(resources))
-    # binder = Ptrace(resources)
-    # test_binder('pthread + ptrace', binder, resources, cmd)
-
-    # Test MPICH
-    # cmd = test_dir + os.path.sep + 'mpi'
-    # binder = MPICH(resources, num_procs=len(resources))
-    # test_binder('MPICH', binder, resources, cmd)
+    for t in OpenMPI.RESOURCE_MAP.keys():
+        resources = [ n for n in topology if hasattr(n, 'type') and n.type == t ]
+        resources = sample(resources, ceil(len(resources)/2))
+        test_resources(resources)
+    resources = [ n for n in topology if hasattr(n, 'type') and n.type in OpenMPI.RESOURCE_MAP.keys() ]
+    resources = sample(resources, min(len(resources), 8))
+    test_resources(resources)
