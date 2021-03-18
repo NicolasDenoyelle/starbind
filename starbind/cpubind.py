@@ -283,7 +283,9 @@ class OpenMPI(MPI):
         # resources logical index.
         if all([ r.type==resources[0].type for r in resources]) and\
            resources[0].type in OpenMPI.RESOURCE_MAP.keys():
-            return [ "rank {}={} slot={}".format(i, hostname, r.logical_index) for i, r in zip(range(len(resources)), resources) ]
+            return [ "rank {}={} slot={}".format(i,
+                                                 r.hostname if hasattr(r, 'hostname') else hostname,
+                                                 r.logical_index) for i, r in zip(range(len(resources)), resources) ]
 
         # If resources are heterogeneous, then we need to specify ranges or
         # hardware threads
@@ -325,9 +327,7 @@ class OpenMPI(MPI):
     
     def __init__(self, resource_list, num_procs=None,
                  env={},
-                 knobs=['--mca btl_openib_allow_ib 1',
-                        '--mca mtl psm2',
-                        '--mca pml_monitoring_enable 1']):
+                 knobs=[]):
         
         # Write rankfile
         f, self.rankfile = tmp(dir=os.getcwd(), text=True)
