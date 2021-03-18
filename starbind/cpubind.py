@@ -217,6 +217,7 @@ class MPI(Binding):
 
     def __init__(self, resource_list, num_procs, env={}, launcher='mpirun'):
         Binding.__init__(self, resource_list)
+        num_procs = num_procs if num_procs is not None else len(resource_list)
         for k in env.keys():
             if k in os.environ.keys():
                 os.environ[k] = '{}:{}'.format(os.environ[k], env[k])
@@ -332,12 +333,12 @@ class OpenMPI(MPI):
         # Write rankfile
         f, self.rankfile = tmp(dir=os.getcwd(), text=True)
         file = os.fdopen(f, 'w')
-        for l in OpenMPI._rankfile_(resources):
+        for l in OpenMPI._rankfile_(resource_list):
             file.write(l + '\n')
         file.close()
 
         # Set knobs
-        knobs.append(OpenMPI._bindto_knob_(resources))
+        knobs.append(OpenMPI._bindto_knob_(resource_list))
         launcher = 'mpirun {} -rf {}'.format(' '.join(knobs), self.rankfile)
     
         MPI.__init__(self, resource_list, num_procs, env, launcher=launcher)
