@@ -14,6 +14,8 @@ from tempfile import mkstemp as tmp
 from itertools import cycle
 from signal import SIGSTOP, SIGCONT, SIGTRAP, SIGKILL, SIGCHLD
 from socket import gethostname
+from copy import deepcopy
+from datetime import timedelta
 
 def ldd(file):
     """
@@ -106,7 +108,7 @@ class OpenMP(Binding):
         cmd = cmd.split()
         os.environ['OMP_PLACES'] = self.OMP_PLACES
         if hasattr(self, 'OMP_NUM_THREADS'):
-            os.environ['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS
+            os.environ['OMP_NUM_THREADS'] = self.OMP_NUM_THREADS            
         os.execvpe(cmd[0], cmd, os.environ)
 
     ldd_regex = re.compile('(lib.*omp$)|(lib.*openmp.*)')
@@ -199,7 +201,6 @@ class Ptrace(Binding):
         fork execvp the command line. Stop child until ptrace is started then resume child.
         @param cmd: The command line string to launch.
         """
-
         pid = os.fork()
         if pid == 0:
             pid = os.getpid()
@@ -288,16 +289,20 @@ class OpenMPI(MPI):
                                                  r.hostname if hasattr(r, 'hostname') else hostname,
                                                  r.logical_index) for i, r in zip(range(len(resources)), resources) ]
 
-        # If resources are heterogeneous, then we need to specify ranges or
-        # hardware threads
-        lines = []
-        for i, r in zip(range(len(resources)), resources):
-            cpus=str(r.PUs[0].logical_index)
-            if len(r.PUs) > 1:
-                cpus += '-{}'.format(r.PUs[-1].logical_index)
-            lines.append("rank {}={} slot={}".format(i, hostname, cpus))
-        return lines
+    @staticmethod
+    def _hostfile_(resources):
+        """
+        Return a list of strings where each item is a line of the rankfile
+        binding in the order of the resource list.
+        """
+        hosts = set([r.hostname for r in resources if hasattr(r, 'hostname')])
+        if len(hosts) == 0:
+            hosts = { gethostname(): len([resources])}
+        else:
+            hosts = { h: len([r for r in resources if hasattr(r, 'hostname') and r.hostname == h ]) for h in hosts }
 
+        return [ '{} slots={} max_slots={}'.format(h, n, n) for (h,n) in hosts.items() ]
+    
     @staticmethod
     def _bindto_knob_(resources):
         """
@@ -363,7 +368,7 @@ class MPICH(MPI):
 
     def __str__(self):
         return '{}'.format(self.launcher)
-
+    
 #########################################################################################
 
 __all__ = [ 'MPI', 'OpenMP', 'OpenMPI', 'MPICH', 'Ptrace' ]
